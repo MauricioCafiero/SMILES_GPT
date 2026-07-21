@@ -1,0 +1,5 @@
+__pycache__/
+gpt-env/
+*.h5
+*.npz
+data/*.npz
