@@ -600,7 +600,7 @@ def unfreeze_gpt(gpt_model):
 # ---------------------------------------------------------------------------
 
 def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
-              pad_token_id=0, verbose=True):
+              pad_token_id=0, verbose=True, use_amp=None):
     '''
     Trains a GPT model with next-token cross-entropy loss.
 
@@ -612,11 +612,20 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
             batch_size: mini-batch size
             lr: learning rate
             pad_token_id: token id ignored in the loss (padding)
+            use_amp: mixed-precision autocast. None = auto (bf16 on CUDA, off
+                elsewhere — MPS/CPU). True/False forces it on/off. bf16 on an
+                A100 is a big speedup and needs no grad scaler.
         Returns:
             gpt: trained model
     '''
     device = next(gpt.parameters()).device
     gpt.train()
+
+    # Mixed precision: bf16 autocast on CUDA is free speed (no grad scaler
+    # needed). Auto-off on MPS/CPU so local Apple-Silicon runs are unaffected.
+    if use_amp is None:
+        use_amp = device.type == "cuda"
+    amp_dtype = torch.bfloat16 if use_amp else None
 
     x = torch.as_tensor(np.asarray(fx), dtype=torch.long, device=device)
     y = torch.as_tensor(np.asarray(fy), dtype=torch.long, device=device)
@@ -630,12 +639,21 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
         t0 = time.perf_counter()
         for xb, yb in loader:
             optimizer.zero_grad()
-            logits, _ = gpt(xb)
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                yb.reshape(-1),
-                ignore_index=pad_token_id,
-            )
+            if use_amp:
+                with torch.autocast(device_type=device.type, dtype=amp_dtype):
+                    logits, _ = gpt(xb)
+                    loss = F.cross_entropy(
+                        logits.reshape(-1, logits.size(-1)),
+                        yb.reshape(-1),
+                        ignore_index=pad_token_id,
+                    )
+            else:
+                logits, _ = gpt(xb)
+                loss = F.cross_entropy(
+                    logits.reshape(-1, logits.size(-1)),
+                    yb.reshape(-1),
+                    ignore_index=pad_token_id,
+                )
             loss.backward()
             optimizer.step()
             running += float(loss.item())
