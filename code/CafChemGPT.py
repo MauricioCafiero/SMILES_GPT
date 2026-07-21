@@ -622,7 +622,7 @@ def unfreeze_gpt(gpt_model):
 # ---------------------------------------------------------------------------
 
 def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
-              pad_token_id=0, verbose=True, use_amp=None,
+              verbose=True, use_amp=None,
               warmup_steps=0, min_lr_frac=1.0):
     '''
     Trains a GPT model with next-token cross-entropy loss.
@@ -634,7 +634,6 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
             epochs: number of epochs
             batch_size: mini-batch size
             lr: peak learning rate
-            pad_token_id: token id ignored in the loss (padding)
             use_amp: mixed-precision autocast. None = auto (bf16 on CUDA, off
                 elsewhere — MPS/CPU). True/False forces it on/off. bf16 on an
                 A100 is a big speedup and needs no grad scaler.
@@ -647,6 +646,14 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
                 constant). e.g. 0.1 -> lr decays to 0.1*lr.
         Returns:
             gpt: trained model
+
+    Note: the loss is NOT masked on padding -- this matches the original TF
+    training (unmasked SparseCategoricalCrossentropy over all 166 positions).
+    ~75% of targets are [PAD], so the model learns the [SEP] -> [PAD] -> [PAD]
+    shut-down transition. Masking PAD removes that signal and the model never
+    learns to stop, which produces run-on chains at inference (decode drops
+    PAD, but the model emits stray atoms instead). So the reported loss is the
+    TF-comparable unmasked number, NOT a real-token-only number.
     '''
     device = next(gpt.parameters()).device
     gpt.train()
@@ -695,14 +702,12 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
                     loss = F.cross_entropy(
                         logits.reshape(-1, logits.size(-1)),
                         yb.reshape(-1),
-                        ignore_index=pad_token_id,
                     )
             else:
                 logits, _ = gpt(xb)
                 loss = F.cross_entropy(
                     logits.reshape(-1, logits.size(-1)),
                     yb.reshape(-1),
-                    ignore_index=pad_token_id,
                 )
             loss.backward()
             optimizer.step()
