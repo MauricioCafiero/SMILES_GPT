@@ -352,6 +352,16 @@ class TokenAndPositionEmbedding(nn.Module):
         self.embed_dim = embed_dim
         self.token_emb = nn.Embedding(vocab_size, embed_dim)
         self.pos_emb = nn.Embedding(max_len, embed_dim)
+        # Small init (GPT-2 style, N(0, 0.02)). PyTorch's nn.Embedding default
+        # is N(0, 1) -- far too large for transformer embeddings: token+pos
+        # feeds straight into attention (no pre-norm), so std-1.0 makes early
+        # attention scores blow up, softmax peaks, gradients flow poorly, and
+        # the model converges to a worse minimum (stalled ~0.58 vs TF's ~0.52).
+        # Keras Embedding defaults to uniform[-0.05, 0.05] (~0.029 std); this
+        # matches that regime. Safe for load_gpt / make_finetune_gpt, which
+        # overwrite these weights with loaded state afterward.
+        nn.init.normal_(self.token_emb.weight, mean=0.0, std=0.02)
+        nn.init.normal_(self.pos_emb.weight, mean=0.0, std=0.02)
 
     def forward(self, x):
         maxlen = x.size(1)
