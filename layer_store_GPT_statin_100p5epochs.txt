@@ -1,7 +1,0 @@
-input_layer_original_original
-token_and_position_embedding_original_original
-transformer_block_original_original
-transformer_block_1_original_original
-transformer_block_X_1_original
-transformer_block_X_2_original
-dense_X_original

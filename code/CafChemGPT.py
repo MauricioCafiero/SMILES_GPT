@@ -432,24 +432,13 @@ def save_gpt(gpt, filename: str):
             gpt: GPT model
             filename: name of the model (a .pt file is written)
         Returns:
-            None; saves model state + config and a list of layer names to files.
+            None; saves model state + config to a .pt file.
     '''
-    print("Layer names:")
-    print("===========================================")
     gpt.summary()
 
     path = f"{filename}.pt"
     torch.save({"config": gpt.config(), "state_dict": gpt.state_dict()}, path)
     print(f"model saved with name: {filename}. (-> {path})")
-
-    # Write the layer-name store next to the model file (handles dir paths).
-    base = os.path.basename(filename)
-    out_dir = os.path.dirname(path)
-    layer_store_path = os.path.join(out_dir, f"layer_store_{base}.txt") if out_dir else f"layer_store_{base}.txt"
-    with open(layer_store_path, "w") as f:
-        for name, _ in gpt.named_modules():
-            f.write("%s\n" % (name + "_original"))
-    print(f"layer names saved in file: {layer_store_path}.")
 
 
 def _build_from_config(cfg, device=None):
