@@ -13,6 +13,7 @@ that generation quality is preserved.
 | File | What | Params | Trained on |
 |------|------|-------|------------|
 | `data/GPT_ZN305_pytorch.pt` | Foundation model (2 transformer blocks) | 1.41M | `data/ZN305K_smiles.csv` (305K SMILES) |
+| `data/GPT_ZN305_mini.pt` | Mini foundation (1 transformer block) | ~0.7M | `data/ZN305K_smiles.csv` — base for the laptop-friendly workbench fine-tune |
 | `data/GPT_Tyrosinase_finetuned.pt` | Fine-tuned model (4 blocks) | 2.73M | `Tyrosinase1239_IC50.csv` (tyrosinase inhibitors) |
 | `data/GPT_Tyrosinase_finetuned_frozen.pt` | Frozen-phase checkpoint (intermediate) | 2.73M | Used by the Colab notebook to skip re-running the frozen phase |
 
@@ -87,6 +88,10 @@ python code/run_gpt.py
   (`data/GPT_Tyrosinase_finetuned_frozen.pt`) and runs **only the unfrozen phase** on GPU,
   then downloads `data/GPT_Tyrosinase_finetuned.pt`. Set `SKIP_FROZEN=False` to re-run the
   frozen phase from the foundation instead.
+- **`notebooks/Colab_Mini_Foundation_Train.ipynb`** — trains the **1-block mini foundation**
+  (`data/GPT_ZN305_mini.pt`) from scratch on a GPU, same recipe as the 2-block one but a
+  single transformer block (~0.7M params). Download it back and commit it for the workbench
+  fine-tune below.
 
 Both notebooks clone this repo (public), so no uploads are needed — the foundation
 `.pt`, the Tyrosinase CSV, and the vocab are all tracked here.
@@ -95,6 +100,28 @@ Both notebooks clone this repo (public), so no uploads are needed — the founda
 
 `notebooks/GPT_CafChem.ipynb` walks through the full workflow end-to-end: tokenize, build
 foundation, fine-tune with transfer learning, save/load, and generate molecules.
+
+## Workbench mini fine-tune (laptop-friendly)
+
+`workbench/` is a PyTorch rewrite of the legacy agentic med-chem prototype
+(`legacy_code/`) that fine-tunes the **mini** 1-block foundation on a ChEMBL
+target's bioactives and generates novel molecules. It reuses the
+`code/CafChemGPT.py` toolkit and is deliberately small so it runs on an 8 GB Mac:
+
+1-block foundation + 1 new block = a 2-block fine-tune (~half the 4-block Tyrosinase fine-tune).
+
+- `workbench/gpt_node.py` — `gpt_node(chembl_id)`: reads `{chembl_id}_bioactives.csv`
+  (fetched by the workbench's `getbioactives_node`, as in the legacy prototype), calls
+  `finetune_gpt`, and returns `(smiles_list, gpt_string, [img])`.
+- `workbench/finetune_gpt.py` — `finetune_gpt(df, chembl_id)`: caps the dataset to 2000,
+  tokenizes, fine-tunes the mini foundation (frozen then unfrozen, 25 + 25 epochs by
+  default), saves `data/GPT_{chembl_id}_mini_finetuned.pt`, generates 50 molecules, and
+  caches them to `gen_smiles_{chembl_id}.csv`. `make_mini_finetune_gpt` loads the mini
+  foundation and appends one fresh block (mirrors `CafChemGPT.make_finetune_gpt`).
+
+Requires the committed `data/GPT_ZN305_mini.pt` (produce it with
+`notebooks/Colab_Mini_Foundation_Train.ipynb`). `legacy_code/` is kept as reference
+and is not used at runtime.
 
 ## Repository layout
 
@@ -108,12 +135,18 @@ data/
   vocab_305K.txt                 100-token vocabulary (used for training + inference)
   vocab.txt                      larger 591-token vocabulary
   GPT_ZN305_pytorch.pt           foundation model
+  GPT_ZN305_mini.pt               mini foundation (1 block, for workbench fine-tune)
   GPT_Tyrosinase_finetuned.pt    fine-tuned model
   GPT_Tyrosinase_finetuned_frozen.pt  frozen-phase checkpoint (for Colab skip-frozen)
 notebooks/
   Colab_Foundation_Train.ipynb     train foundation on Colab GPU
+  Colab_Mini_Foundation_Train.ipynb train the 1-block mini foundation on Colab GPU
   Colab_Finetune_Tyrosinase.ipynb  fine-tune on Colab GPU
   GPT_CafChem.ipynb                interactive workflow notebook
+workbench/
+  gpt_node.py        workbench entry point (called by the agentic med-chem workbench)
+  finetune_gpt.py    mini-foundation fine-tune + generation, reusing CafChemGPT
+legacy_code/          old TF prototype (old_prot.py, finetune_gpt.py) — reference only
 Tyrosinase1239_IC50.csv          fine-tune dataset
 ```
 

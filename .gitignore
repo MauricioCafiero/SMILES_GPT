@@ -8,3 +8,8 @@ data/*.npz
 *.log
 *_molecules.png
 *_trimmed.csv
+
+# workbench transient outputs (per-target fine-tune artifacts + generation cache)
+gen_smiles_*.csv
+data/*_ft.csv
+data/GPT_*_mini_finetuned.pt
