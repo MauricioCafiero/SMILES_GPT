@@ -3,3 +3,8 @@ gpt-env/
 *.h5
 *.npz
 data/*.npz
+
+# transient run outputs (logs, generated molecule grids, trim-vocab artifacts)
+*.log
+*_molecules.png
+*_trimmed.csv
