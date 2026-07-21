@@ -599,7 +599,8 @@ def unfreeze_gpt(gpt_model):
 # ---------------------------------------------------------------------------
 
 def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
-              pad_token_id=0, verbose=True, use_amp=None):
+              pad_token_id=0, verbose=True, use_amp=None,
+              warmup_steps=0, min_lr_frac=1.0):
     '''
     Trains a GPT model with next-token cross-entropy loss.
 
@@ -609,11 +610,18 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
             fy: target array (N, L) of token ids (shifted)
             epochs: number of epochs
             batch_size: mini-batch size
-            lr: learning rate
+            lr: peak learning rate
             pad_token_id: token id ignored in the loss (padding)
             use_amp: mixed-precision autocast. None = auto (bf16 on CUDA, off
                 elsewhere — MPS/CPU). True/False forces it on/off. bf16 on an
                 A100 is a big speedup and needs no grad scaler.
+            warmup_steps: linear LR warmup from ~0 up to `lr` over this many
+                optimizer steps, then either hold (min_lr_frac=1.0) or cosine-
+                decay. 0 = no warmup (constant lr). Useful with fresh-init
+                transformers so early steps don't destabilize the model.
+            min_lr_frac: final LR as a fraction of `lr` after cosine decay over
+                the steps remaining after warmup. 1.0 = no decay (warmup then
+                constant). e.g. 0.1 -> lr decays to 0.1*lr.
         Returns:
             gpt: trained model
     '''
@@ -632,6 +640,26 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
 
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, gpt.parameters()), lr=lr)
 
+    # Optional LR schedule: linear warmup over `warmup_steps`, then cosine
+    # decay to `min_lr_frac * lr` over the remaining steps. Defaults
+    # (warmup_steps=0, min_lr_frac=1.0) reproduce the original constant-LR
+    # behavior, so existing callers (finetune, run_gpt.py) are unaffected.
+    total_steps = epochs * len(loader)
+    warmup = min(warmup_steps, total_steps)
+    decay_steps = max(1, total_steps - warmup)
+    use_sched = warmup > 0 or min_lr_frac < 1.0
+    if use_sched:
+        def lr_lambda(step):
+            if warmup > 0 and step < warmup:
+                return (step + 1) / warmup  # +1 so the first step isn't lr=0
+            prog = (step - warmup) / decay_steps
+            prog = min(max(prog, 0.0), 1.0)
+            return min_lr_frac + 0.5 * (1.0 - min_lr_frac) * (1.0 + np.cos(np.pi * prog))
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+    else:
+        scheduler = None
+
+    global_step = 0
     for epoch in range(epochs):
         running = 0.0
         n_batches = 0
@@ -655,14 +683,18 @@ def train_gpt(gpt, fx, fy, epochs=5, batch_size=512, lr=1e-3,
                 )
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
             running += float(loss.item())
             n_batches += 1
+            global_step += 1
             if verbose and (n_batches % 50 == 0):
                 el = time.perf_counter() - t0
                 print(f"  epoch {epoch+1}/{epochs} batch {n_batches}/{len(loader)} "
                       f"loss {running/n_batches:.4f} ({el:.1f}s)", flush=True)
         if verbose:
             print(f"epoch {epoch + 1}/{epochs} - loss: {running / max(n_batches, 1):.4f} "
+                  f"- lr {optimizer.param_groups[0]['lr']:.2e} "
                   f"({time.perf_counter()-t0:.1f}s)", flush=True)
     gpt.eval()
     return gpt
