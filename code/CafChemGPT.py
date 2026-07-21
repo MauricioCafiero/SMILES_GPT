@@ -818,8 +818,13 @@ def _draw_grid(mols, legends, molsPerRow=3, subImgSize=(300, 300)):
                "FINETUNE_EPOCHS and re-run.")
     d.text((10, 10), msg, fill=(0, 0, 0))
     return img
-    '''
-    Use a GPT model to generate novel molecules (quick 5-molecule test).
+
+
+def test_gen(model, tokenizer, T_int, VOCAB_SIZE, rn_seed=42):
+    """Use a GPT model to generate novel molecules (quick 5-molecule test).
+
+    Stripped-down inference with a fixed set of 5 short prompts for a fast
+    sanity check.
 
         Args:
             model: the GPT model to use
@@ -829,7 +834,7 @@ def _draw_grid(mols, legends, molsPerRow=3, subImgSize=(300, 300)):
             rn_seed: random seed
         Returns:
             img: image of generated molecules
-    '''
+    """
     test_string = ['C(', 'O=', 'c1', 'NC', 'CO']
     batch_length = len(test_string)
     test_xlist = np.empty([batch_length, 3], dtype=int)

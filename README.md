@@ -13,8 +13,8 @@ that generation quality is preserved.
 | File | What | Params | Trained on |
 |------|------|-------|------------|
 | `data/GPT_ZN305_pytorch.pt` | Foundation model (2 transformer blocks) | 1.41M | `data/ZN305K_smiles.csv` (305K SMILES) |
-| `GPT_Tyrosinase_finetuned.pt` | Fine-tuned model (4 blocks) | 2.73M | `Tyrosinase1239_IC50.csv` (tyrosinase inhibitors) |
-| `GPT_Tyrosinase_finetuned_frozen.pt` | Frozen-phase checkpoint (intermediate) | 2.73M | Used by the Colab notebook to skip re-running the frozen phase |
+| `data/GPT_Tyrosinase_finetuned.pt` | Fine-tuned model (4 blocks) | 2.73M | `Tyrosinase1239_IC50.csv` (tyrosinase inhibitors) |
+| `data/GPT_Tyrosinase_finetuned_frozen.pt` | Frozen-phase checkpoint (intermediate) | 2.73M | Used by the Colab notebook to skip re-running the frozen phase |
 
 Foundation: unmasked next-token loss **0.158**, generates **7/7 valid** drug-like
 molecules. Fine-tune: **12/12 valid**, output enriched in tyrosinase-inhibitor
@@ -80,12 +80,12 @@ python code/run_gpt.py
 
 ### Colab (GPU) — train the foundation or fine-tune
 
-- **`Colab_Foundation_Train.ipynb`** — trains the foundation from scratch on a GPU
+- **`notebooks/Colab_Foundation_Train.ipynb`** — trains the foundation from scratch on a GPU
   (bf16 autocast on CUDA), saves `data/GPT_ZN305_pytorch.pt`, downloads it back.
-- **`Colab_Finetune_Tyrosinase.ipynb`** — fine-tunes on Tyrosinase. Defaults to
+- **`notebooks/Colab_Finetune_Tyrosinase.ipynb`** — fine-tunes on Tyrosinase. Defaults to
   `SKIP_FROZEN=True`: loads the committed frozen checkpoint
-  (`GPT_Tyrosinase_finetuned_frozen.pt`) and runs **only the unfrozen phase** on GPU,
-  then downloads `GPT_Tyrosinase_finetuned.pt`. Set `SKIP_FROZEN=False` to re-run the
+  (`data/GPT_Tyrosinase_finetuned_frozen.pt`) and runs **only the unfrozen phase** on GPU,
+  then downloads `data/GPT_Tyrosinase_finetuned.pt`. Set `SKIP_FROZEN=False` to re-run the
   frozen phase from the foundation instead.
 
 Both notebooks clone this repo (public), so no uploads are needed — the foundation
@@ -93,7 +93,7 @@ Both notebooks clone this repo (public), so no uploads are needed — the founda
 
 ### Notebook (interactive workflow)
 
-`GPT_CafChem.ipynb` walks through the full workflow end-to-end: tokenize, build
+`notebooks/GPT_CafChem.ipynb` walks through the full workflow end-to-end: tokenize, build
 foundation, fine-tune with transfer learning, save/load, and generate molecules.
 
 ## Repository layout
@@ -104,16 +104,17 @@ code/
   smiles_tokenizer.py  SMILES tokenizer (DeepChem-style regex, no DeepChem dep)
   run_gpt.py           CLI driver for foundation / finetune / infer stages
 data/
-  ZN305K_smiles.csv    foundation training corpus
-  vocab_305K.txt       100-token vocabulary (used for training + inference)
-  vocab.txt            larger 591-token vocabulary
-  GPT_ZN305_pytorch.pt  foundation model
-Tyrosinase1239_IC50.csv         fine-tune dataset
-GPT_Tyrosinase_finetuned.pt      fine-tuned model
-GPT_Tyrosinase_finetuned_frozen.pt  frozen-phase checkpoint (for Colab skip-frozen)
-Colab_Foundation_Train.ipynb     train foundation on Colab GPU
-Colab_Finetune_Tyrosinase.ipynb  fine-tune on Colab GPU
-GPT_CafChem.ipynb                interactive workflow notebook
+  ZN305K_smiles.csv              foundation training corpus
+  vocab_305K.txt                 100-token vocabulary (used for training + inference)
+  vocab.txt                      larger 591-token vocabulary
+  GPT_ZN305_pytorch.pt           foundation model
+  GPT_Tyrosinase_finetuned.pt    fine-tuned model
+  GPT_Tyrosinase_finetuned_frozen.pt  frozen-phase checkpoint (for Colab skip-frozen)
+notebooks/
+  Colab_Foundation_Train.ipynb     train foundation on Colab GPU
+  Colab_Finetune_Tyrosinase.ipynb  fine-tune on Colab GPU
+  GPT_CafChem.ipynb                interactive workflow notebook
+Tyrosinase1239_IC50.csv          fine-tune dataset
 ```
 
 ## Tokenizer

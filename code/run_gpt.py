@@ -61,7 +61,7 @@ RESUME_FOUNDATION = os.environ.get("RESUME_FOUNDATION", "0") == "1"
 
 FINETUNE_EPOCHS   = int(os.environ.get("FINETUNE_EPOCHS", "50"))
 FINETUNE_BATCH    = int(os.environ.get("FINETUNE_BATCH",  "512"))
-FINETUNE_FILE     = "GPT_Tyrosinase_finetuned"
+FINETUNE_FILE     = "data/GPT_Tyrosinase_finetuned"
 
 INFER_PROMPTS     = int(os.environ.get("INFER_PROMPTS", "100"))
 INFER_TEMP        = float(os.environ.get("INFER_TEMP", "1.5"))
