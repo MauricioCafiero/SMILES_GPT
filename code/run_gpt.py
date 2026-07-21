@@ -130,6 +130,13 @@ def finetune():
     gpt_ft = make_finetune_gpt(2, freeze_old_layers=True)
     train_gpt(gpt_ft, fx, fy, epochs=FINETUNE_EPOCHS // 2, batch_size=FINETUNE_BATCH)
 
+    # Save the frozen-only model BEFORE attempting the unfrozen phase. The
+    # unfrozen phase trains all 2.7M params and can stall under MPS memory
+    # pressure on the 8GB Mac; this checkpoint preserves the frozen work so a
+    # stall never loses it. Usable as-is (loss ~0.17).
+    save_gpt(gpt_ft, FINETUNE_FILE + "_frozen")
+    print(f"Frozen-only model saved -> {FINETUNE_FILE}_frozen.pt")
+
     # Unfreeze everything and train a bit more (as in the notebook workflow).
     gpt_ft = unfreeze_gpt(gpt_ft)
     train_gpt(gpt_ft, fx, fy, epochs=FINETUNE_EPOCHS - FINETUNE_EPOCHS // 2,
