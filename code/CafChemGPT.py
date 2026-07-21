@@ -277,9 +277,14 @@ def mols_from_smiles(input_smiles_list):
 # Model definition (PyTorch).
 # ---------------------------------------------------------------------------
 
-# Default hyperparameters mirror the original Keras model.
+# Default hyperparameters mirror the original TF/Keras model
+# (ChemSpaceAttn.ipynb, cell 11): 2 heads, each with a 256-wide key (key_dim),
+# i.e. q/k/v project embed_dim -> num_heads*key_dim (256 -> 512), NOT a 4-way
+# split of embed_dim. The earlier refactor used N_HEADS=4/head_dim=64, which is
+# a smaller, different attention -- matching TF here is what closed the gap.
 EMBEDDING_DIM = 256
-N_HEADS = 4
+N_HEADS = 2
+KEY_DIM = 256
 FEED_FORWARD_DIM = 256
 DROPOUT_RATE = 0.1
 
@@ -308,18 +313,25 @@ class TransformerBlock(nn.Module):
     Keras model. attn_scores is returned as None for API parity (callers
     ignore it)."""
 
-    def __init__(self, num_heads, embed_dim, ff_dim, dropout_rate=DROPOUT_RATE):
+    def __init__(self, num_heads, key_dim, embed_dim, ff_dim,
+                 dropout_rate=DROPOUT_RATE):
         super().__init__()
         self.num_heads = num_heads
+        self.key_dim = key_dim
+        self.head_dim = key_dim           # SDPA head_dim == per-head key/query width
         self.embed_dim = embed_dim
-        self.head_dim = embed_dim // num_heads
         self.ff_dim = ff_dim
         self.dropout_rate = dropout_rate
 
-        self.q_proj = nn.Linear(embed_dim, embed_dim)
-        self.k_proj = nn.Linear(embed_dim, embed_dim)
-        self.v_proj = nn.Linear(embed_dim, embed_dim)
-        self.out_proj = nn.Linear(embed_dim, embed_dim)
+        # TF MultiHeadAttention(num_heads, key_dim): q/k/v project embed_dim ->
+        # num_heads*key_dim (NOT an embed_dim->embed_dim split). With N_HEADS=2
+        # and KEY_DIM=256 that's 256->512, ~2x the attention params of a 4-head
+        # embed_dim//heads split. Matching this is what closed the quality gap.
+        qkv_dim = num_heads * key_dim
+        self.q_proj = nn.Linear(embed_dim, qkv_dim)
+        self.k_proj = nn.Linear(embed_dim, qkv_dim)
+        self.v_proj = nn.Linear(embed_dim, qkv_dim)
+        self.out_proj = nn.Linear(qkv_dim, embed_dim)
         self.dropout_1 = nn.Dropout(dropout_rate)
         self.ln_1 = nn.LayerNorm(embed_dim, eps=1e-6)
         self.ffn_1 = nn.Linear(embed_dim, ff_dim)
@@ -328,13 +340,13 @@ class TransformerBlock(nn.Module):
         self.ln_2 = nn.LayerNorm(embed_dim, eps=1e-6)
 
     def forward(self, x):
-        B, L, D = x.shape
+        B, L, _ = x.shape
         h, hd = self.num_heads, self.head_dim
         q = self.q_proj(x).view(B, L, h, hd).transpose(1, 2)
         k = self.k_proj(x).view(B, L, h, hd).transpose(1, 2)
         v = self.v_proj(x).view(B, L, h, hd).transpose(1, 2)
         attn = F.scaled_dot_product_attention(q, k, v, is_causal=True)
-        attn = attn.transpose(1, 2).contiguous().view(B, L, D)
+        attn = attn.transpose(1, 2).contiguous().view(B, L, h * hd)
         attn_out = self.dropout_1(self.out_proj(attn))
         out1 = self.ln_1(x + attn_out)
         ffn = self.ffn_2(F.relu(self.ffn_1(out1)))
@@ -373,20 +385,26 @@ class GPT(nn.Module):
     """A small decoder-only GPT producing token logits over the vocabulary."""
 
     def __init__(self, num_blocks, max_length, vocab_size,
-                 embed_dim=EMBEDDING_DIM, num_heads=N_HEADS,
+                 embed_dim=EMBEDDING_DIM, num_heads=N_HEADS, key_dim=None,
                  ff_dim=FEED_FORWARD_DIM, dropout_rate=DROPOUT_RATE):
         super().__init__()
+        # key_dim defaults to embed_dim//num_heads so OLD checkpoints (which
+        # predate the key_dim field and used a plain 4-way split) still load.
+        # New models pass KEY_DIM explicitly to match the TF architecture.
+        if key_dim is None:
+            key_dim = embed_dim // num_heads
         self.num_blocks = num_blocks
         self.max_length = max_length
         self.vocab_size = vocab_size
         self.embed_dim = embed_dim
         self.num_heads = num_heads
+        self.key_dim = key_dim
         self.ff_dim = ff_dim
         self.dropout_rate = dropout_rate
 
         self.embedding = TokenAndPositionEmbedding(max_length, vocab_size, embed_dim)
         self.blocks = nn.ModuleList([
-            TransformerBlock(num_heads, embed_dim, ff_dim, dropout_rate)
+            TransformerBlock(num_heads, key_dim, embed_dim, ff_dim, dropout_rate)
             for _ in range(num_blocks)
         ])
         self.head = nn.Linear(embed_dim, vocab_size)
@@ -406,13 +424,14 @@ class GPT(nn.Module):
             "vocab_size": self.vocab_size,
             "embed_dim": self.embed_dim,
             "num_heads": self.num_heads,
+            "key_dim": self.key_dim,
             "ff_dim": self.ff_dim,
             "dropout_rate": self.dropout_rate,
         }
 
 
 def make_gpt(num_blocks: int, max_length: int, VOCAB_SIZE: int,
-             embed_dim=EMBEDDING_DIM, num_heads=N_HEADS,
+             embed_dim=EMBEDDING_DIM, num_heads=N_HEADS, key_dim=KEY_DIM,
              ff_dim=FEED_FORWARD_DIM, dropout_rate=DROPOUT_RATE,
              device=None):
     '''
@@ -428,7 +447,7 @@ def make_gpt(num_blocks: int, max_length: int, VOCAB_SIZE: int,
     if device is None:
         device = get_device()
     gpt = GPT(num_blocks, max_length, VOCAB_SIZE,
-              embed_dim=embed_dim, num_heads=num_heads,
+              embed_dim=embed_dim, num_heads=num_heads, key_dim=key_dim,
               ff_dim=ff_dim, dropout_rate=dropout_rate).to(device)
     gpt.summary()
     return gpt
@@ -454,10 +473,13 @@ def save_gpt(gpt, filename: str):
 def _build_from_config(cfg, device=None):
     if device is None:
         device = get_device()
+    # key_dim absent in configs saved before the TF-architecture match -> None
+    # -> GPT falls back to embed_dim//num_heads, so old checkpoints still load.
     return GPT(
         cfg["num_blocks"], cfg["max_length"], cfg["vocab_size"],
         embed_dim=cfg.get("embed_dim", EMBEDDING_DIM),
         num_heads=cfg.get("num_heads", N_HEADS),
+        key_dim=cfg.get("key_dim"),
         ff_dim=cfg.get("ff_dim", FEED_FORWARD_DIM),
         dropout_rate=cfg.get("dropout_rate", DROPOUT_RATE),
     ).to(device)
@@ -544,6 +566,7 @@ def make_finetune_gpt(num_new_blocks: int, freeze_old_layers=True,
     gpt_ft = GPT(
         total_blocks, base_cfg["max_length"], base_cfg["vocab_size"],
         embed_dim=base_cfg["embed_dim"], num_heads=base_cfg["num_heads"],
+        key_dim=base_cfg.get("key_dim"),
         ff_dim=base_cfg["ff_dim"], dropout_rate=base_cfg["dropout_rate"],
     ).to(device)
 
