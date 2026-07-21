@@ -79,15 +79,24 @@ class SmilesTokenizer:
         # Store all unknown token IDs for lookup
         self.unk_token_ids = set(self.vocab.get(t, 0) for t in self.unk_tokens)
 
-        # Compile SMILES tokenization regex patterns
-        # Order matters: longer/more specific patterns first
+        # Compile SMILES tokenization regex patterns (DeepChem/canonical style).
+        # Order matters: longer/more specific patterns first.
+        #
+        # NOTE: do NOT use a generic [A-Z][a-z]? here. That pattern merges an
+        # aliphatic atom with a following lowercase aromatic atom into one token
+        # (Cc, Nc, Oc, Cn, Sc, Fc ...) which isn't in the vocab, so ~2% of all
+        # tokens -- the most common drug-like motifs (toluene, phenol, aniline)
+        # -- fell through to [unused], corrupting training and breaking SMILES
+        # at generation time. Halogens are handled with Cl?/Br? and every other
+        # atom as a single letter, so Cc -> C, c (two tokens, both in vocab).
         self.token_patterns = [
-            r'\[([^\]]+)\]',  # Bracketed atoms like [C@H], [N+], [O-]
-            r'%\d{2}',        # Two-digit ring closure like %10, %11
-            r'Cl|Br',         # Two-letter elements
-            r'[A-Z][a-z]?',   # Element symbols (one capital + optional lowercase)
-            r'[@\.\-=#$:\\/\(\)\[\]\+\*cndbosp]',  # Other SMILES characters
-            r'\d',            # Single-digit ring closure
+            r'\[[^\]]+\]',     # Bracketed atoms: [C@H], [N+], [O-], [nH]
+            r'%\d{2}',          # Two-digit ring closure: %10, %11
+            r'Br?|Cl?',        # Two-letter halogens (also matches lone B / C)
+            r'N|O|S|P|F|I|H',  # Single-letter uppercase atoms
+            r'b|c|n|o|s|p',     # Lowercase aromatic atoms
+            r'[@.\\/=#$:~*+\-()\[\]]',  # Bonds, chirality, branches, misc
+            r'\d',              # Single-digit ring closure
         ]
         self.token_regex = re.compile('|'.join(self.token_patterns))
 
