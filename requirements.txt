@@ -1,0 +1,16 @@
+# Versions as tested — Python 3.14.5, macOS (Apple Silicon, MPS) and
+# CUDA (Modal L4). All pinned to what the models in this repo were trained
+# and evaluated with.
+
+torch==2.13.0
+numpy==2.4.6
+pandas==3.0.3
+rdkit==2026.3.3
+pillow==12.2.0
+
+# workbench/ only
+scikit-learn==1.9.0
+
+# rxn_smiles_gpt/ only
+pyarrow==26.0.0
+modal==1.6.1          # only needed for the Modal rented-GPU training app

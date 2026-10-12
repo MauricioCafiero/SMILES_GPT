@@ -47,10 +47,17 @@ ceiling is training budget, not data. Published seq2seq/graph models reach
 ~40–50% top-1 with far more compute and reaction-class conditioning (the
 `class` column is in the parquet, unused here).
 
-## Environment
+## Requirements
 
-Uses the shared repo env `../gpt-env` (Python 3.14, torch, rdkit, numpy,
-pyarrow, pandas). Run the scripts below with:
+Dependencies are pinned in the parent repo's
+[`../requirements.txt`](../requirements.txt); this subfolder was developed
+and evaluated with Python 3.14, torch 2.13 and RDKit 2026.03 from that file.
+`torch`, `numpy`, `pandas`, `rdkit`, `pyarrow` are the active
+dependencies here; all scripts run locally on CPU, Apple MPS, or CUDA.
+`modal` in the same file is required only by `code/modal_app.py`, the
+rented-GPU alternative to `code/train.py`.
+
+The commands below invoke the repo's interpreter directly:
 
 ```sh
 PY=../gpt-env/bin/python

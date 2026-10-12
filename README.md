@@ -52,9 +52,14 @@ fallback. See `get_device()` in `code/CafChemGPT.py`.
 
 ```bash
 python -m venv gpt-env && source gpt-env/bin/activate
-pip install torch pandas numpy scikit-learn matplotlib rdkit
+pip install -r requirements.txt
 python code/run_gpt.py
 ```
+
+`requirements.txt` pins the versions the models here were trained with
+(Python 3.14); `torch`, `numpy`, `pandas`, `rdkit`, `pillow` are the core
+dependencies, and `scikit-learn` / `pyarrow` / `modal` are only needed by
+`workbench/` and `rxn_smiles_gpt/`.
 
 Stages are controlled with environment variables (defaults shown):
 
