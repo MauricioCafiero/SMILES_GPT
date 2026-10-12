@@ -5,6 +5,10 @@ A decoder-only GPT that takes a **product** SMILES as a prompt and generates
 feasibility study of the parent repo's tokenizer + GPT architecture on
 [pingzhili/uspto-50k](https://huggingface.co/datasets/pingzhili/uspto-50k).
 
+Two things you can do with it locally:
+**train it** (`code/train.py`, CUDA / Apple MPS / CPU) and
+**run it on your own SMILES** (`code/infer.py`, low memory).
+
 ## Results
 
 Trained on all 4 randomized-SMILES variants of the 49k train split, evaluated
@@ -17,7 +21,7 @@ by beam search (beam=10) on the full 1,001-row val split:
 | 3 (retrain) | 14.7M | 50 | 96.5% | 8.2% | 10.7% | rented L4 |
 
 Runs 2 and 3 are seeded-identical retrains (8.2% both) — the recipe is
-reproducible. Saved weights: `runs/retro_gpt_modal.pt` (56 MB,
+reproducible. Saved weights ship in `runs/retro_gpt_modal.pt` (56 MB,
 `torch.load(..., weights_only=True)` → `{"config", "state_dict"}`).
 
 **Metrics, defined** — for each validation product the model generates a
@@ -45,105 +49,116 @@ ceiling is training budget, not data. Published seq2seq/graph models reach
 
 ## Environment
 
-Uses the shared repo env `../gpt-env` (Python 3.14, torch + MPS, rdkit,
-numpy, pyarrow, pandas). Everything here runs locally — CPU or Apple MPS.
-
-## Code layout
-
-| File | What |
-|---|---|
-| `code/tokenizer.py`, `code/vocab.txt` | SmilesTokenizer (regex vocab) — copied from the parent repo, unchanged |
-| `code/gpt_model.py` | GPT classes from the parent repo + KV-cache decoding (`cache=None` reproduces reference behavior; cache path is single-token decode, prefill runs without cache) |
-| `code/gpu_core.py` | Train/eval core: masked loss, AdamW + warmup/cosine, per-epoch checkpoints, early stopping (patience 6), batched KV-cached beam search, `beam_eval(..., return_preds=True)` for per-row strings |
-| `code/build_aug.py` | Builds 4 randomized-SMILES variants of train (`.npz`), seeded per row index |
-| `code/modal_app.py` | GPU training app (`--tiny` data probe, `--end2end` persistence probe, full train+eval) |
-| `code/inference_demo.py` | Load a checkpoint, beam-decode real val rows, print a hit and a miss |
-| `code/make_example_images.py` | Regenerates `images/example_reactions.png` + `images/example_text.txt` (the README examples) from one beam pass |
-| `code/retro_pipeline.py` | The original local-only pipeline (data prep + small MPS train/eval; runs 1's history) |
-| `data/*.parquet` | Raw HF train/val splits |
-| `data/aug{0..3}.npz`, `data/retro_val.npz` | Tokenized int32 training arrays (max_len 256), built by `build_aug.py` (not tracked in git) |
-| `data/retro_val_gt.json` | Canonical val products/ground-truths aligned to the val arrays |
-| `runs/retro_gpt_modal.pt` | The trained 14.7M checkpoint |
-| `images/example_reactions.png` | The two README example reactions, drawn by RDKit |
-| `run_all.sh`, `run_modal2.sh` | Launcher scripts (training) |
-
-Data model: input rows are `[CLS] product [SEP] reactants [SEP] [PAD]...`,,
-student-forcing next-token training with the pad masked out of the loss;
-decoding starts at the end of the product prompt.
-
-## Usage
+Uses the shared repo env `../gpt-env` (Python 3.14, torch, rdkit, numpy,
+pyarrow, pandas). Run the scripts below with:
 
 ```sh
 PY=../gpt-env/bin/python
-
-# rebuild tokenized data (only if the npz files are missing)
-$PY code/build_aug.py 4
-
-# local inference on the saved checkpoint (MPS, no GPU rental needed)
-$PY code/inference_demo.py 60 10
-
-# regenerate the README example reactions (text + RDKit scheme image)
-$PY code/make_example_images.py 60 10
 ```
 
-## Example inference calls
+## Training (CUDA / Apple MPS / CPU)
 
-`make_example_images.py` on the saved model (beam-10, MPS; the PNG and the
-text block below are written by the same pass):
+```sh
+# full recipe on a CUDA GPU (~65 min on an L4 for 50 epochs)
+$PY code/train.py --epochs 50
 
-![Reaction schemes: product | true reactants | model top-1 | best lower-rank candidate, for three classes of inference outcome](images/example_reactions.png)
-
-```
-beam-10 over 150 rows (MPS): valid 97.3% top-1 11.3% top-3 15.3%
-
-=== SUCCESSFUL INFERENCE ===
-         product: CCOC(=O)C1CCCCC1O
-  true reactants: CCOC(=O)C1CCCCC1=O
-    beam rank 1: O=C(C1CCCCC1=O)OCC   <- exact match
-    beam rank 2: O=C(OCC)C1CCCCC1=O   <- exact match
-    beam rank 3: C1CC(CCC1C(=O)OCC)O
-
-=== RANK-RECOVERED INFERENCE ===
-         product: OCCOc1cncc(Cl)c1
-  true reactants: Clc1cncc(Cl)c1.OCCO
-    beam rank 1: c1c(cncc1Cl)O.OCCO          (wrong: put the OH on the ring)
-    beam rank 2: Clc1cncc(c1)Cl.OCCO   <- exact match
-    beam rank 3: c1c(Cl)cncc1Cl.OCCO   <- exact match
-
-=== UNSUCCESSFUL INFERENCE ===
-         product: CCC[C@H]1O[C@@H]1C(=O)OC
-  true reactants: CCC[C@@H](O)[C@@H](Cl)C(=O)OC
-    beam rank 1: O=C(OC)[C@H]1O[C@H]1CCCC(=O)O
-    beam rank 2: O=C(OC)[C@H]1O[C@H]1CCCC(O)=O
-    beam rank 3: O=C(OC)[C@H]1O[C@H]1CCCC=O
+# conservative defaults on MPS/CPU: --batch 128, fp32
+# a laptop is much slower than the L4 per epoch — use --subset for tests
+$PY code/train.py --epochs 2 --subset 5000     # smoke test
+$PY code/train.py --help                       # all options
 ```
 
-**Reading the three cases:**
+What it does:
 
-- **Successful** — the ester product's reduction origin (ketone) is ranked
-  first; ranks 1–2 are the exact reactant set.
-- **Rank-recovered** — top-1 got the glycol-ether disconnection right but put
-  the leaving group wrong (OH on the ring); the true dihalide `+` glycol
-  partner is there at rank 2. This is the gap between Top-1 and Top-3: the
-  right answer is in the beam, just not first.
-- **Unsuccessful** — the true reaction is base-induced cyclization of an
-  α-hydroxy-α-chloro ester to the epoxide; the model invents ring-opened
-  diacid isomers — plausible-looking SMILES, wrong chemistry entirely.
+- picks the first available device, cuda > mps > cpu (`--device` to force);
+- builds nothing silently: if `data/aug0.npz` is missing it tells you to run
+  `$PY code/build_aug.py 4` first;
+- trains the production recipe — masked loss, cycling the 4
+  randomized-SMILES variants each epoch, AdamW + warmup/cosine LR, per-epoch
+  checkpoints, early stopping (6 epochs without val improvement);
+- writes `runs/retro_gpt_local.pt` (`--ckpt` to rename) plus
+  `train_state.json` alongside it — it never touches the shipped
+  `runs/retro_gpt_modal.pt`.
 
-(Local MPS runs tie-break slightly differently from run to run: this
-150-row sample reads 11.3% top-1, the full 1,001-row GPU evals gave 8.2%
-twice. `make_example_images.py` regenerates the PNG and text block together.)
+## Inference on your own SMILES
+
+```sh
+$PY code/infer.py "CCOC(=O)C1CCCCC1O"          # one or more product SMILES
+$PY code/infer.py --beam 10 --top 3 ...        # defaults shown
+$PY code/infer.py                              # interactive, one per line
+$PY code/infer.py --ckpt runs/retro_gpt_local.pt ...
+```
+
+Memory-light by construction: one prompt at a time with a KV-cached beam
+search — no training arrays are loaded, and the process peaks around 0.5 GB
+of resident memory (torch runtime included; batched beam eval was what hit
+multi-GB and stalled the machine once). Atom map labels in the input are
+stripped and the product is canonicalized before tokenizing. Actual output
+on the shipped checkpoint (beam-10, MPS):
+
+```
+product: CCOC(=O)C1CCCCC1O
+  rank 1: O=C(C1CCCCC1=O)OCC    [valid]
+  rank 2: O=C(OCC)C1CCCCC1=O    [valid]
+  rank 3: C1(CCCCC1O)C(OCC)=O.O    [valid]
+
+product: OCCOc1cncc(Cl)c1
+  rank 1: Clc1cncc(c1)Cl.OCCO    [valid]
+  rank 2: c1(Cl)cncc(c1)Cl.OCCO    [valid]
+  rank 3: c1c(cncc1Cl)O.OCCBr    [valid]
+
+product: CCC[C@H]1O[C@@H]1C(=O)OC
+  rank 1: O=C(OC)[C@H]1O[C@@H]1CCC(=O)O    [valid]
+  rank 2: O=C(OC)[C@H]1O[C@H]1CCC.OO    [valid]
+  rank 3: [C@H]1(C(OC)=O)O[C@H]1CCC.OO    [valid]
+```
+
+Reads: `CCOC(=O)C1CCCCC1O` correctly disconnects the ester to the ketone;
+`OCCOc1cncc(Cl)c1` correctly gives the dichloropyridine + glycol partner (the
+true reactants, exact at rank 1 here). `CCC[C@H]1O[C@@H]1C(=O)OC` is a miss:
+the true reaction is an α-hydroxy-α-chloro ester cyclizing to the epoxide;
+the model invents ring-opened diacid isomers — valid-looking SMILES, wrong
+chemistry. That is what 8% top-1 means: one in twelve products gets a usable
+answer, and you still have to check the rest.
+
+## Example reactions
+
+Same three outcomes drawn per-candidate (product | true reactants | top-1 |
+best lower-rank):
+
+![Example reactions: product | true reactants | model top-1 | best lower-rank candidate, for three classes of inference outcome](images/example_reactions.png)
+
+## Data and model
+
+Input rows are `[CLS] product [SEP] reactants [SEP] [PAD]...` over
+atom-map-stripped canonical SMILES (max_len 256); student-forcing next-token
+training with the pad masked out of the loss; decoding starts at the end of
+the product prompt. Config: 8 blocks, d=384, 6 heads (key 64), ff 1536 →
+14,748,495 params.
+
+| File | What |
+|---|---|
+| `code/tokenizer.py`, `code/vocab.txt` | SmilesTokenizer (regex vocab), from the parent repo unchanged |
+| `code/gpt_model.py` | GPT classes + KV-cache decoding (`cache=None` reproduces reference behavior) |
+| `code/gpu_core.py` | Train/eval core: masked loss, warmup/cosine, early stopping, batched beam search |
+| `code/train.py`, `code/infer.py` | The two entry points described above |
+| `code/build_aug.py` | Builds the 4 randomized-SMILES training variants (`.npz`) |
+| `code/modal_app.py` | Rented-GPU training app (Modal) |
+| `code/retro_pipeline.py` | Original local-only pipeline (run 1's history) |
+| `data/*.parquet` | Raw HF train/val splits |
+| `data/retro_val_gt.json` | Canonical val products/ground-truths aligned to the val arrays |
+| `runs/retro_gpt_modal.pt` | The trained 14.7M checkpoint |
+| `images/example_reactions.png` | Example reactions, drawn by RDKit |
 
 ## Training stats
 
 Loss curves (masked, real tokens only; val = teacher-forced on the canonical
-val split) — from the 50-epoch L4 run that produced the saved checkpoint:
+val split) from the 50-epoch L4 run that produced the shipped checkpoint:
 
 | epoch | 1 | 2 | 3 | 5 | 10 | 20 | 30 | 40 | 49 (best) | 50 |
 |---|---|---|---|---|---|---|---|---|---|---|
 | train | 2.72 | 1.67 | 1.37 | 1.07 | 0.75 | 0.62 | 0.58 | 0.55 | 0.533 | 0.532 |
 | val | 1.87 | 1.55 | 1.26 | 1.03 | 0.70 | 0.61 | 0.59 | 0.57 | **0.5625** | 0.5656 |
 
-Config: 8 blocks, d=384, 6 heads (key 64), ff 1536 → 14,748,495 params;
-max_len 256; batch 512; bf16 autocast; AdamW lr 1e-3, wd 0.01, warmup 10% +
-cosine to 0.1×; ~73 s/epoch on the rented L4.
+Local MPS runs tie-break slightly differently from run to run (a 150-row
+sample reads 11.3% top-1); the full seeded GPU evals reproduced at 8.2% twice.

@@ -45,10 +45,16 @@ def make_model(max_length=256, device="cuda"):
     return model.to(device)
 
 
+# Set by the caller to redirect checkpoint saves (e.g. train.py writes
+# runs/retro_gpt_local.pt instead of the Modal volume name).
+CKPT_OVERRIDE = None
+
+
 def save_ckpt(model):
     import torch
     os.makedirs(RUNS, exist_ok=True)
-    torch.save({"config": model.config(), "state_dict": model.state_dict()}, CKPT)
+    torch.save({"config": model.config(), "state_dict": model.state_dict()},
+               CKPT_OVERRIDE or CKPT)
     if KEEP_CKPT is not None:
         KEEP_CKPT()
 
@@ -76,10 +82,18 @@ def val_loss(model, device, log):
     vx, vy = vx.to(device), vy.to(device)
     model.eval()
     tot, cnt = 0.0, 0
+    # cuda chunks 2048; mps/cpu get small chunks (the 255² attention matrix at
+    # batch 2048 is many GB under the MPS math backend)
+    vb = 2048 if str(device).startswith("cuda") else 256
     with torch.no_grad():
-        for b0 in range(0, len(vx), 2048):
-            xb, yb = vx[b0:b0 + 2048], vy[b0:b0 + 2048]
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        for b0 in range(0, len(vx), vb):
+            xb, yb = vx[b0:b0 + vb], vy[b0:b0 + vb]
+            if str(device).startswith("cuda"):
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits, _ = model(xb)
+                    per = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
+                                          yb.reshape(-1), reduction="none")
+            else:
                 logits, _ = model(xb)
                 per = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
                                       yb.reshape(-1), reduction="none")
@@ -123,7 +137,12 @@ def train(model, epochs, n_variants=4, batch_size=512, lr=1e-3, device="cuda",
         model.train()
         for b0 in range(0, len(x), batch_size):
             xb, yb = x[b0:b0 + batch_size], y[b0:b0 + batch_size]
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+            if str(device).startswith("cuda"):
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    logits, _ = model(xb)
+                    per = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
+                                          yb.reshape(-1), reduction="none")
+            else:
                 logits, _ = model(xb)
                 per = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
                                       yb.reshape(-1), reduction="none")
@@ -136,6 +155,8 @@ def train(model, epochs, n_variants=4, batch_size=512, lr=1e-3, device="cuda",
         log(f"epoch {ep+1}/{epochs} loss {running/nb:.4f} "
             f"({time.time()-t0:.0f}s) lr {sched.get_last_lr()[0]:.2e}")
         del x, y
+        if device == "mps":
+            torch.mps.empty_cache()   # release the train-phase cache before val
         v = val_loss(model, device, log)
         if v < best_val - 1e-4:
             best_val, stale = v, 0
@@ -153,7 +174,10 @@ def train(model, epochs, n_variants=4, batch_size=512, lr=1e-3, device="cuda",
         # overwrite the per-epoch checkpoint with the best weights, so the
         # file on the volume is the model that produced best val
         save_ckpt(model)
-        with open(os.path.join(RUNS, "train_state.json"), "w") as f:
+        # next to the active checkpoint (not fixed to RUNS — a local
+        # train.py run must not overwrite the Modal run's state file)
+        with open(os.path.join(os.path.dirname(CKPT_OVERRIDE or CKPT),
+                               "train_state.json"), "w") as f:
             json.dump({"best_val": best_val, "epochs_run": ep + 1}, f)
         if KEEP_CKPT is not None:
             KEEP_CKPT()

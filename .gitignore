@@ -16,3 +16,7 @@ data/GPT_*_mini_finetuned.pt
 
 # environment-specific ops notes (not for the public repo)
 rxn_smiles_gpt/DEV*.md
+
+# local-train outputs (the shipped checkpoint is tracked; a user run
+# would overwrite train_state.json beside it)
+rxn_smiles_gpt/runs/retro_gpt_local.pt
