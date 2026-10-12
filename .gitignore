@@ -13,3 +13,6 @@ data/*.npz
 gen_smiles_*.csv
 data/*_ft.csv
 data/GPT_*_mini_finetuned.pt
+
+# environment-specific ops notes (not for the public repo)
+rxn_smiles_gpt/DEV*.md
