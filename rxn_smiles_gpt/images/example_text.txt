@@ -1,0 +1,13 @@
+beam-10 over 60 rows (MPS): valid 93.3% top-1 5.0% top-3 6.7%
+=== SUCCESSFUL INFERENCE ===
+         product: O=C(O)Cn1ccc(C2CC2)n1
+  true reactants: CCOC(=O)Cn1ccc(C2CC2)n1
+    beam rank 1: O=C(OCC)Cn1ccc(n1)C1CC1   <- exact match
+    beam rank 2: O=C(OCC)Cn1ccc(C2CC2)n1   <- exact match
+    beam rank 3: O=C(OCC)Cn1nc(cc1)C1CC1   <- exact match
+=== UNSUCCESSFUL INFERENCE ===
+         product: CCOC(=O)C1CCCCC1O
+  true reactants: CCOC(=O)C1CCCCC1=O
+    beam rank 1: C1CCCCC1C(=O)OCCc1ccccc1
+    beam rank 2: C1(CCCCC1C(OCC)=O)OC(=O)C
+    beam rank 3: O=C(C1CCCCC1OC(=O)C)OCC

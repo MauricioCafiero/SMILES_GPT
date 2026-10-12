@@ -21,6 +21,11 @@ Foundation: unmasked next-token loss **0.158**, generates **7/7 valid** drug-lik
 molecules. Fine-tune: **12/12 valid**, output enriched in tyrosinase-inhibitor
 motifs (phenols/catechols, thiosemicarbazones, flavonoids).
 
+Also in this repo: [`rxn_smiles_gpt/`](rxn_smiles_gpt/README.md) — the same
+tokenizer + architecture applied in reverse, as a retrosynthesis GPT trained
+on USPTO-50k (product → reactants, KV-cached beam search, 14.7M params, 8.2%
+top-1@1 on the validation split).
+
 ## Architecture
 
 Decoder-only transformer, post-norm residuals, matching the original TF model:

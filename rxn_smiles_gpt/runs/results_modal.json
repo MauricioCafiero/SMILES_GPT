@@ -1,0 +1,18 @@
+{
+  "epochs": 50,
+  "n": 1001,
+  "valid": 0.965034965034965,
+  "top1_strict": 0.08191808191808192,
+  "top1_lenient": 0.08191808191808192,
+  "top3": 0.1068931068931069,
+  "config": {
+    "num_blocks": 8,
+    "max_length": 256,
+    "vocab_size": 591,
+    "embed_dim": 384,
+    "num_heads": 6,
+    "key_dim": 64,
+    "ff_dim": 1536,
+    "dropout_rate": 0.1
+  }
+}
