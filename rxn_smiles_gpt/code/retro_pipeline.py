@@ -176,12 +176,15 @@ def cmd_eval(max_rows=200, batch_rows=32):
     L = model.max_length
 
     def prod_ids_of(row):
+        # drop the row's own [CLS]: the caller re-adds it, and a second
+        # [CLS] [CLS] prompt is off-distribution (the 2026-10 eval bug)
         ids = []
         for j in row:
             if j == sep:
                 break
-            if j != pad:
-                ids.append(int(j))
+            if j in (cls, pad):
+                continue
+            ids.append(int(j))
         return ids
 
     n = len(x)
@@ -261,12 +264,15 @@ def cmd_evalbeam(beam=10, max_rows=200, batch_rows=8):
     L = model.max_length
 
     def prod_ids_of(row):
+        # drop the row's own [CLS]: the caller re-adds it, and a second
+        # [CLS] [CLS] prompt is off-distribution (the 2026-10 eval bug)
         ids = []
         for j in row:
             if j == sep:
                 break
-            if j != pad:
-                ids.append(int(j))
+            if j in (cls, pad):
+                continue
+            ids.append(int(j))
         return ids
 
     n = len(x)

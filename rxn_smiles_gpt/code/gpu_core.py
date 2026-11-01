@@ -187,6 +187,12 @@ def train(model, epochs, n_variants=4, batch_size=512, lr=1e-3, device="cuda",
 def beam_eval(model, beam=10, batch_rows=8, device="cuda", log=print, top_k=3,
               eval_rows=None, return_preds=False):
     """Batched beam search on the canonical val split; top-1/top-k metrics.
+
+    NOTE (2026-10): do not use these numbers for score reporting — left-padding
+    the prompts shifts the learned absolute positions and pads precede [CLS],
+    both off-distribution; beam-10 it reads ~10% top-1 where the unpadded
+    inference-path eval (code/eval.py) reads ~32.5% on the same 40 rows. It is
+    kept for post-training sanity checks only (it is much faster on a GPU).
     Batches are length-sorted so prompts and generations inside a batch have
     similar lengths (fewer wasted decode steps). batch_rows=8 keeps the KV
     cache (which scales as batch_rows x beam) light enough for an 8 GB laptop;
@@ -209,12 +215,15 @@ def beam_eval(model, beam=10, batch_rows=8, device="cuda", log=print, top_k=3,
     n = len(xs) if eval_rows is None else min(eval_rows, len(xs))
 
     def prod_ids_of(row):
+        # drop the row's own [CLS]: the caller re-adds it, and a second
+        # [CLS] [CLS] prompt is off-distribution (the 2026-10 eval bug)
         ids = []
         for j in row:
             if j == sep:
                 break
-            if j != pad:
-                ids.append(int(j))
+            if j in (cls, pad):
+                continue
+            ids.append(int(j))
         return ids
 
     # length-sort: group rows so each batch shares similar prompt length

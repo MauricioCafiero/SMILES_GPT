@@ -4,6 +4,7 @@ Modal app for the USPTO-50k retro GPT. L4 GPU, hard timeouts (budget-capped).
 Usage:
     modal run code/modal_app.py --tiny            # timing probe on L4
     modal run code/modal_app.py --epochs 14 --beam 10
+    modal run code/modal_app.py --eval-full-run   # code/eval.py, all val rows
 """
 
 import os
@@ -117,10 +118,44 @@ def train(epochs: int = 30, beam: int = 10, eval_rows: int = 500):
     return res
 
 
+# the shipped checkpoint, baked into the image: /vol/runs/retro_gpt.pt is not
+# safe to score (tiny_end2end overwrites it with an untrained model)
+eval_image = image.add_local_file(os.path.join(ROOT, "runs", "retro_gpt_modal.pt"),
+                                  "/app/runs/retro_gpt_modal.pt")
+
+
+@app.function(image=eval_image, gpu="A10G", cpu=2, memory=8192, timeout=60 * 100,
+              volumes={"/vol": vol})
+def eval_full(beam: int = 10, rows: int = 0):
+    """code/eval.py (inference-path scoring) on the val split; dump to volume."""
+    import subprocess
+    import sys
+    if not os.path.exists("/app/data"):
+        os.symlink("/vol/data", "/app/data")  # eval.py reads ROOT/data
+    out = f"/vol/runs/eval_full_beam{beam}.json"
+    cmd = [sys.executable, "-u", "/app/code/eval.py", "--beam", str(beam),
+           "--ckpt", "/app/runs/retro_gpt_modal.pt", "--device", "cuda",
+           "--out", out]
+    if rows:
+        cmd += ["--rows", str(rows)]
+    subprocess.run(cmd, check=True)
+    vol.commit()
+    with open(out) as f:
+        return f.read()
+
+
 @app.local_entrypoint()
 def main(tiny: bool = False, end2end: bool = False, epochs: int = 30,
-         beam: int = 10, eval_rows: int = 500):
-    if tiny:
+         beam: int = 10, eval_rows: int = 500, eval_full_run: bool = False,
+         rows: int = 0):
+    if eval_full_run:
+        txt = eval_full.remote(beam=beam, rows=rows)
+        out = os.path.join(ROOT, "runs", f"eval_full_beam{beam}"
+                           + (f"_{rows}rows" if rows else "") + ".json")
+        with open(out, "w") as f:
+            f.write(txt)
+        print(f"wrote {out}")
+    elif tiny:
         tiny_test.remote(steps=40)
     elif end2end:
         tiny_end2end.remote()

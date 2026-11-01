@@ -12,17 +12,41 @@ Two things you can do with it locally:
 ## Results
 
 Trained on all 4 randomized-SMILES variants of the 49k train split, evaluated
-by beam search (beam=10) on the full 1,001-row val split:
+by beam search (beam=10) on the full 1,001-row val split with `code/eval.py`
+(the same single-prompt decode as `code/infer.py`):
 
-| Run | Params | Epochs | Valid SMILES | Top-1 | Top-3 | Hardware |
+| Checkpoint | Params | Epochs | Valid SMILES | Top-1 | Top-3 | Top-3 (unique molecules) |
 |---|---|---|---|---|---|---|
-| 1 | 3.5M | 10 | 9.5% | 0% | — | laptop (MPS) |
-| 2 | 14.7M | 50 | 97.2% | 8.2% | 11.5% | rented L4 |
-| 3 (retrain) | 14.7M | 50 | 96.5% | 8.2% | 10.7% | rented L4 |
+| `runs/retro_gpt_modal.pt` | 14.7M | 50 | **97.9%** | **21.2%** | 26.6% | **31.5%** |
 
-Runs 2 and 3 are seeded-identical retrains (8.2% both) — the recipe is
-reproducible. Saved weights ship in `runs/retro_gpt_modal.pt` (56 MB,
-`torch.load(..., weights_only=True)` → `{"config", "state_dict"}`).
+The checkpoint was trained on a rented L4 (run 3 below). Saved weights ship in
+`runs/retro_gpt_modal.pt` (56 MB, `torch.load(..., weights_only=True)` →
+`{"config", "state_dict"}`).
+
+**Correction (2026-11-01).** Earlier versions of this README reported 8.2%
+top-1. Those numbers came from a batched beam eval (`gpu_core.beam_eval`)
+that fed the model its start token twice (`[CLS] [CLS] product …`) and
+left-padded the prompts. Both put the prompt off-distribution for a model
+with learned absolute position embeddings. The model was fine; the scoring
+was wrong. Same checkpoint, same 1,001 rows, beam 10:
+
+| Eval | Valid SMILES | Top-1 | Top-3 |
+|---|---|---|---|
+| old batched eval (bug), runs 2 / 3 | 97.2% / 96.5% | 8.2% | 11.5% / 10.7% |
+| `code/eval.py`, duplicates removed by SMILES string (comparable) | 97.9% | 21.2% | 26.6% |
+| `code/eval.py`, duplicates removed by canonical SMILES (current `infer.py`) | 97.9% | 21.2% | 31.5% |
+
+The second row is measured exactly as the old one except for the bug, so it
+gives the real change: top-1 8.2% → 21.2%. The third row adds a separate
+change to `infer.py`: beam candidates are now deduplicated by canonical
+molecule rather than by SMILES string, so the top-3 slots no longer hold one
+molecule spelled three ways. That moves top-3 only. `gpu_core.beam_eval` is
+kept for quick post-training sanity checks; don't report its numbers.
+
+Training history: run 1 (3.5M params, 10 epochs on a laptop) reached 9.5%
+valid SMILES and 0% top-1 under the old eval. Runs 2 and 3 are
+seeded-identical 50-epoch retrains of the 14.7M model; they scored the same
+(8.2%) under the old eval, so the recipe reproduces.
 
 **Metrics, defined** — for each validation product the model generates a
 ranked set of up to 10 candidate reactant sets (SMILES strings, ranked by the
@@ -35,7 +59,9 @@ beam-search score):
   chemically identical to the true reactant set (compared as canonical
   molecule sets, so atom order/SMILES spelling doesn't matter).
 - **Top-3** — fraction where *any* of the top-3 ranked candidates is
-  chemically correct. The gap between Top-1 and Top-3 is the usual "rank
+  chemically correct. "Unique molecules" counts the top 3 *distinct*
+  molecules (current `infer.py` behaviour); the plain column lets a molecule
+  occupy several slots under different spellings, as the old eval did. The gap between Top-1 and Top-3 is the usual "rank
   noise" of generation models: the right answer is often present, just not
   first.
 
@@ -106,18 +132,18 @@ on the shipped checkpoint (beam-10, MPS):
 ```
 product: CCOC(=O)C1CCCCC1O
   rank 1: O=C(C1CCCCC1=O)OCC    [valid]
-  rank 2: O=C(OCC)C1CCCCC1=O    [valid]
-  rank 3: C1(CCCCC1O)C(OCC)=O.O    [valid]
+  rank 2: C1(CCCCC1O)C(OCC)=O.O    [valid]
+  rank 3: C1(CCCCC1O)C(OCC)=O.[Mg+][CH3]    [valid]
 
 product: OCCOc1cncc(Cl)c1
   rank 1: Clc1cncc(c1)Cl.OCCO    [valid]
-  rank 2: c1(Cl)cncc(c1)Cl.OCCO    [valid]
-  rank 3: c1c(cncc1Cl)O.OCCBr    [valid]
+  rank 2: c1c(cncc1Cl)O.OCCBr    [valid]
+  rank 3: Clc1cncc(c1)O.C(CO)O    [valid]
 
 product: CCC[C@H]1O[C@@H]1C(=O)OC
   rank 1: O=C(OC)[C@H]1O[C@@H]1CCC(=O)O    [valid]
   rank 2: O=C(OC)[C@H]1O[C@H]1CCC.OO    [valid]
-  rank 3: [C@H]1(C(OC)=O)O[C@H]1CCC.OO    [valid]
+  rank 3: [C@H]1(C(=O)OC)O[C@@H]1CCC.OO    [valid]
 ```
 
 Reads: `CCOC(=O)C1CCCCC1O` correctly disconnects the ester to the ketone;
@@ -125,8 +151,9 @@ Reads: `CCOC(=O)C1CCCCC1O` correctly disconnects the ester to the ketone;
 true reactants, exact at rank 1 here). `CCC[C@H]1O[C@@H]1C(=O)OC` is a miss:
 the true reaction is an α-hydroxy-α-chloro ester cyclizing to the epoxide;
 the model invents ring-opened diacid isomers — valid-looking SMILES, wrong
-chemistry. That is what 8% top-1 means: one in twelve products gets a usable
-answer, and you still have to check the rest.
+chemistry. That is what 21% top-1 means: about one product in five gets the
+right answer first, about one in three has it somewhere in the top 3 distinct
+candidates, and you still have to check the rest.
 
 ## Example reactions
 
@@ -147,10 +174,11 @@ the product prompt. Config: 8 blocks, d=384, 6 heads (key 64), ff 1536 →
 |---|---|
 | `code/tokenizer.py`, `code/vocab.txt` | SmilesTokenizer (regex vocab), from the parent repo unchanged |
 | `code/gpt_model.py` | GPT classes + KV-cache decoding (`cache=None` reproduces reference behavior) |
-| `code/gpu_core.py` | Train/eval core: masked loss, warmup/cosine, early stopping, batched beam search |
+| `code/gpu_core.py` | Train core: masked loss, warmup/cosine, early stopping; batched beam search for sanity checks only |
 | `code/train.py`, `code/infer.py` | The two entry points described above |
 | `code/build_aug.py` | Builds the 4 randomized-SMILES training variants (`.npz`) |
-| `code/modal_app.py` | Rented-GPU training app (Modal) |
+| `code/eval.py` | Scores a checkpoint on the val split through the inference path (the numbers in Results) |
+| `code/modal_app.py` | Rented-GPU app (Modal): training, and `eval_full` for `eval.py` |
 | `code/retro_pipeline.py` | Original local-only pipeline (run 1's history) |
 | `data/*.parquet` | Raw HF train/val splits |
 | `data/retro_val_gt.json` | Canonical val products/ground-truths aligned to the val arrays |
@@ -167,5 +195,8 @@ val split) from the 50-epoch L4 run that produced the shipped checkpoint:
 | train | 2.72 | 1.67 | 1.37 | 1.07 | 0.75 | 0.62 | 0.58 | 0.55 | 0.533 | 0.532 |
 | val | 1.87 | 1.55 | 1.26 | 1.03 | 0.70 | 0.61 | 0.59 | 0.57 | **0.5625** | 0.5656 |
 
-Local MPS runs tie-break slightly differently from run to run (a 150-row
-sample reads 11.3% top-1); the full seeded GPU evals reproduced at 8.2% twice.
+The full eval in Results ran on a Modal A10G (`modal run code/modal_app.py
+--eval-full-run`, ~5 min). Local MPS runs of `code/eval.py` can tie-break
+slightly differently between runs, so small samples move by a point or so.
+Slices are not representative: the first 40 val rows read 32.5% top-1
+against 21.2% over all 1,001.

@@ -49,7 +49,8 @@ def canon_product(sm):
 def top_reactants(model, product_smiles, device, beam=10, top_k=3):
     """Beam-decode reactants for one product. Returns (prod, [(sm, score, valid), ...]).
     Same scoring as gpu_core.beam_eval: length norm score / len^0.7, deduped
-    by string, ranked best-first."""
+    by canonical SMILES (unlike beam_eval, which dedupes by string), ranked
+    best-first."""
     import torch
     import torch.nn.functional as F
     from tokenizer import SmilesTokenizer
@@ -112,18 +113,17 @@ def top_reactants(model, product_smiles, device, beam=10, top_k=3):
                 gen = seq[b].tolist()[len(prompt):]
                 fin_top.append((float(scores[b]) / len(gen) ** 0.7, tok.decode(gen)))
 
-    # dedupe by string, rank best-first
+    # dedupe by canonical SMILES (one molecule spelled several ways is one
+    # candidate; invalid strings key on themselves), keep the best-scoring
+    # spelling, rank best-first
     seen = {}
     for s, sm2 in fin_top:
-        if sm2 not in seen or s > seen[sm2]:
-            seen[sm2] = s
-    pool = sorted(seen.items(), key=lambda t: t[1], reverse=True)[:top_k]
-
-    out = []
-    for sm2, s in pool:
         m = Chem.MolFromSmiles(sm2)
-        out.append((sm2, s, m is not None,
-                    Chem.MolToSmiles(m) if m is not None else ""))
+        canon = Chem.MolToSmiles(m) if m is not None else ""
+        key = canon or sm2
+        if key not in seen or s > seen[key][1]:
+            seen[key] = (sm2, s, m is not None, canon)
+    out = sorted(seen.values(), key=lambda t: t[1], reverse=True)[:top_k]
     return prod, out
 
 
